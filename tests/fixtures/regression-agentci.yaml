@@ -6,5 +6,5 @@ adapter:
   type: command
   command: python ../../scripts/agentci_adapter.py
 tests:
-  glob: intentional-regression.json
+  glob: required-tool-regression.json
 output_dir: .agentci/runs

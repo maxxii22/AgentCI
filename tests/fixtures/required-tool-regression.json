@@ -1,6 +1,6 @@
 {
-  "id": "intentional-regression-missing-slack",
-  "name": "Intentional regression fixture that requires a tool the adapter will not call",
+  "id": "required-tool-regression-missing-slack",
+  "name": "Intentional regression fixture that requires a tool the sample adapter will not call",
   "input": {
     "messages": [
       {

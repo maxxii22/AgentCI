@@ -34,7 +34,9 @@ class AgentCIRunTests(unittest.TestCase):
         run_json = self._latest_run_json(output_root)
         run_data = json.loads(run_json.read_text(encoding="utf-8"))
         self.assertEqual(run_data["status"], "passed")
+        self.assertEqual(run_data["result_kind"], "pass")
         self.assertEqual(run_data["summary"]["total"], 1)
+        self.assertTrue((run_json.parent / "traces" / "create-followup-ticket.json").exists())
 
     def test_run_returns_exit_code_1_for_intentional_regression_fixture(self) -> None:
         completed, output_root = self._run_cli(
@@ -50,8 +52,20 @@ class AgentCIRunTests(unittest.TestCase):
         report_data = json.loads(report_json.read_text(encoding="utf-8"))
 
         self.assertEqual(run_data["status"], "failed")
+        self.assertEqual(run_data["result_kind"], "regression")
         self.assertEqual(report_data["status"], "failed")
+        self.assertEqual(report_data["result_kind"], "regression")
         self.assertGreaterEqual(report_data["summary"]["blocking_regressions"], 1)
+        self.assertEqual(report_data["failed_case_ids"], ["required-tool-regression-missing-slack"])
+        self.assertEqual(report_data["summary"]["failed_cases"], 1)
+        self.assertTrue((run_json.parent / "traces" / "required-tool-regression-missing-slack.json").exists())
+
+        first_regression = report_data["regressions"][0]
+        self.assertEqual(first_regression["case_id"], "required-tool-regression-missing-slack")
+        self.assertEqual(first_regression["check"], "required_tools")
+        self.assertEqual(first_regression["expected"], "jira.get_issue, jira.create_issue, slack.send_message")
+        self.assertEqual(first_regression["actual"], "jira.get_issue, jira.create_issue")
+        self.assertIn("Missing required tools: slack.send_message", first_regression["message"])
 
     def test_run_returns_exit_code_2_for_config_failure_and_writes_error_artifacts(self) -> None:
         completed, output_root = self._run_cli(
@@ -67,8 +81,10 @@ class AgentCIRunTests(unittest.TestCase):
         report_data = json.loads(report_json.read_text(encoding="utf-8"))
 
         self.assertEqual(run_data["status"], "error")
+        self.assertEqual(run_data["result_kind"], "runtime_failure")
         self.assertEqual(run_data["error"]["stage"], "config")
         self.assertEqual(report_data["status"], "error")
+        self.assertEqual(report_data["result_kind"], "runtime_failure")
 
     def _run_cli(self, *args: str) -> tuple[subprocess.CompletedProcess[str], Path]:
         TEMP_ROOT.mkdir(parents=True, exist_ok=True)

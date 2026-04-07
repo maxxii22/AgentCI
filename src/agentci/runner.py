@@ -74,6 +74,7 @@ def execute_run(
     run_result: RunResult = {
         "run_id": run_id,
         "git_sha": os.environ.get("GITHUB_SHA", "unknown"),
+        "result_kind": "regression" if failed_count else "pass",
         "status": "failed" if failed_count else "passed",
         "started_at": started_at,
         "finished_at": finished_at,
@@ -85,7 +86,13 @@ def execute_run(
         "cases": case_results,
     }
 
-    regression_report = build_regression_report(run_id, regressions)
+    regression_report = build_regression_report(
+        run_id=run_id,
+        total_cases=len(case_results),
+        passed_cases=passed_count,
+        failed_cases=failed_count,
+        regressions=regressions,
+    )
     write_artifact(run_dir, "run.json", run_result)
     write_artifact(run_dir, "regression-report.json", regression_report)
 
@@ -147,6 +154,7 @@ def _write_error_artifacts(
     run_result: RunResult = {
         "run_id": run_id,
         "git_sha": os.environ.get("GITHUB_SHA", "unknown"),
+        "result_kind": "runtime_failure",
         "status": "error",
         "started_at": started_at,
         "finished_at": finished_at,
@@ -165,8 +173,15 @@ def _write_error_artifacts(
     regression_report: RegressionReport = {
         "run_id": run_id,
         "baseline_source": "repo_test_expectations",
+        "result_kind": "runtime_failure",
         "status": "error",
+        "failed_case_ids": sorted(
+            {case["case_id"] for case in case_results if case["status"] == "failed"}
+        ),
         "summary": {
+            "total_cases": len(case_results),
+            "passed_cases": passed_count,
+            "failed_cases": failed_count,
             "blocking_regressions": len(regressions),
             "non_blocking_warnings": 0,
         },

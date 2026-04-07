@@ -7,14 +7,7 @@ keeps policy decisions separate from command execution.
 
 from __future__ import annotations
 
-from agentci.schemas import (
-    AdapterOutput,
-    CaseResult,
-    CheckResult,
-    RegressionItem,
-    RegressionReport,
-    TestCase,
-)
+from agentci.schemas import AdapterOutput, CaseResult, CheckResult, RegressionItem, RegressionReport, TestCase
 
 
 def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseResult, list[RegressionItem]]:
@@ -30,7 +23,15 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
 
     required_tools = expectations.get("required_tools", [])
     missing_tools = [tool for tool in required_tools if tool not in tool_names]
-    checks.append(_make_check("required_tools", not missing_tools, _join_items(missing_tools)))
+    checks.append(
+        _make_check(
+            "required_tools",
+            not missing_tools,
+            _missing_required_tools_message(missing_tools),
+            expected=", ".join(required_tools),
+            actual=", ".join(tool_names) or "(no tools called)",
+        )
+    )
     if missing_tools:
         regressions.append(
             _make_regression(
@@ -44,7 +45,15 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
 
     forbidden_tools = expectations.get("forbidden_tools", [])
     forbidden_used = [tool for tool in forbidden_tools if tool in tool_names]
-    checks.append(_make_check("forbidden_tools", not forbidden_used, _join_items(forbidden_used)))
+    checks.append(
+        _make_check(
+            "forbidden_tools",
+            not forbidden_used,
+            _forbidden_tools_message(forbidden_used),
+            expected="No forbidden tools",
+            actual=", ".join(forbidden_used) or "(none)",
+        )
+    )
     if forbidden_used:
         regressions.append(
             _make_regression(
@@ -63,6 +72,8 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
             "critical_tool_sequence",
             sequence_ok,
             None if sequence_ok else f"Expected subsequence: {' -> '.join(expected_sequence)}",
+            expected=" -> ".join(expected_sequence),
+            actual=" -> ".join(tool_names) or "(no tools called)",
         )
     )
     if expected_sequence and not sequence_ok:
@@ -81,7 +92,13 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
         fact for fact in expected_output_facts if fact.lower() not in final_output.lower()
     ]
     checks.append(
-        _make_check("output_must_contain", not missing_facts, _join_items(missing_facts))
+        _make_check(
+            "output_must_contain",
+            not missing_facts,
+            _missing_expected_facts_message(missing_facts),
+            expected=", ".join(expected_output_facts),
+            actual=final_output,
+        )
     )
     if missing_facts:
         regressions.append(
@@ -106,14 +123,28 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
     return case_result, regressions
 
 
-def build_regression_report(run_id: str, regressions: list[RegressionItem]) -> RegressionReport:
+def build_regression_report(
+    *,
+    run_id: str,
+    total_cases: int,
+    passed_cases: int,
+    failed_cases: int,
+    regressions: list[RegressionItem],
+) -> RegressionReport:
     """Build the JSON report uploaded by CI and rendered in PR comments."""
+
+    failed_case_ids = sorted({regression["case_id"] for regression in regressions})
 
     return {
         "run_id": run_id,
         "baseline_source": "repo_test_expectations",
+        "result_kind": "regression" if regressions else "pass",
         "status": "failed" if regressions else "passed",
+        "failed_case_ids": failed_case_ids,
         "summary": {
+            "total_cases": total_cases,
+            "passed_cases": passed_cases,
+            "failed_cases": failed_cases,
             "blocking_regressions": len(regressions),
             "non_blocking_warnings": 0,
         },
@@ -129,10 +160,20 @@ def _extract_tool_names(events: list[dict[str, object]]) -> list[str]:
     ]
 
 
-def _make_check(name: str, passed: bool, message: str | None) -> CheckResult:
+def _make_check(
+    name: str,
+    passed: bool,
+    message: str | None,
+    *,
+    expected: str,
+    actual: str,
+) -> CheckResult:
     check: CheckResult = {"name": name, "status": "passed" if passed else "failed"}
     if message:
         check["message"] = message
+    if not passed:
+        check["expected"] = expected
+        check["actual"] = actual
     return check
 
 
@@ -156,6 +197,21 @@ def _make_regression(
 
 def _join_items(items: list[str]) -> str | None:
     return ", ".join(items) if items else None
+
+
+def _missing_required_tools_message(items: list[str]) -> str | None:
+    joined = _join_items(items)
+    return f"Missing required tools: {joined}" if joined else None
+
+
+def _forbidden_tools_message(items: list[str]) -> str | None:
+    joined = _join_items(items)
+    return f"Forbidden tools were used: {joined}" if joined else None
+
+
+def _missing_expected_facts_message(items: list[str]) -> str | None:
+    joined = _join_items(items)
+    return f"Missing expected facts: {joined}" if joined else None
 
 
 def _is_subsequence(expected: list[str], actual: list[str]) -> bool:

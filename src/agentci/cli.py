@@ -13,7 +13,11 @@ import sys
 from pathlib import Path
 
 from agentci.config import ConfigError, load_config
-from agentci.reporter import render_markdown_report, render_text_summary
+from agentci.reporter import (
+    load_run_and_regression_artifacts,
+    render_markdown_report,
+    render_text_summary,
+)
 from agentci.runner import execute_run, write_error_run
 
 
@@ -45,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.set_defaults(func=command_compare)
 
     report_parser = subparsers.add_parser(
-        "report", help="Optional helper to render a saved run into text or markdown"
+        "report", help="Optional helper to preview PR comment markdown from saved artifacts"
     )
     report_parser.add_argument("--input", required=True, help="Path to a run.json artifact")
     report_parser.add_argument("--regressions", help="Optional path to regression-report.json")
@@ -105,9 +109,9 @@ def command_run(args: argparse.Namespace) -> int:
 
     if args.fail_on == "never":
         return 0
-    if run_result["status"] == "error":
+    if run_result["result_kind"] == "runtime_failure":
         return 2
-    if regression_report["status"] == "failed":
+    if run_result["result_kind"] == "regression":
         return 1
     return 0
 
@@ -123,7 +127,7 @@ def command_compare(args: argparse.Namespace) -> int:
 
 
 def command_report(args: argparse.Namespace) -> int:
-    """Render a saved run artifact into text or markdown."""
+    """Render a saved run artifact into text or PR-comment markdown."""
 
     run_path = Path(args.input).resolve()
     if not run_path.exists():
@@ -136,14 +140,7 @@ def command_report(args: argparse.Namespace) -> int:
         else run_path.parent / "regression-report.json"
     )
 
-    run_result = _read_json(run_path)
-    regression_report = _read_json(regression_path) if regression_path.exists() else {
-        "run_id": run_result["run_id"],
-        "baseline_source": "repo_test_expectations",
-        "status": "passed",
-        "summary": {"blocking_regressions": 0, "non_blocking_warnings": 0},
-        "regressions": [],
-    }
+    run_result, regression_report = load_run_and_regression_artifacts(run_path, regression_path)
 
     if args.format in {"markdown", "github-summary"}:
         rendered = render_markdown_report(run_result, regression_report)
@@ -158,10 +155,6 @@ def command_report(args: argparse.Namespace) -> int:
         print(rendered)
 
     return 0
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _resolve_fallback_output_root(output_dir: str | None) -> Path:
@@ -187,11 +180,7 @@ def _resolve_output_root_for_cli(
 def _result_kind(
     run_result: dict[str, object], regression_report: dict[str, object]
 ) -> str:
-    if run_result.get("status") == "error":
-        return "runtime_failure"
-    if regression_report.get("status") == "failed":
-        return "regression"
-    return "pass"
+    return str(run_result.get("result_kind") or regression_report.get("result_kind") or "pass")
 
 
 def main(argv: list[str] | None = None) -> int:

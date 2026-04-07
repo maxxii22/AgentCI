@@ -59,6 +59,8 @@ class CheckResult(TypedDict, total=False):
     name: str
     status: str
     message: str
+    expected: str
+    actual: str
 
 
 class CaseResult(TypedDict):
@@ -78,6 +80,7 @@ class RunSummary(TypedDict):
 class RunResult(TypedDict):
     run_id: str
     git_sha: str
+    result_kind: str
     status: str
     started_at: str
     finished_at: str
@@ -96,6 +99,9 @@ class RegressionItem(TypedDict):
 
 
 class RegressionSummary(TypedDict):
+    total_cases: int
+    passed_cases: int
+    failed_cases: int
     blocking_regressions: int
     non_blocking_warnings: int
 
@@ -103,7 +109,9 @@ class RegressionSummary(TypedDict):
 class RegressionReport(TypedDict):
     run_id: str
     baseline_source: str
+    result_kind: str
     status: str
+    failed_case_ids: list[str]
     summary: RegressionSummary
     regressions: list[RegressionItem]
     error: NotRequired["ErrorInfo"]
