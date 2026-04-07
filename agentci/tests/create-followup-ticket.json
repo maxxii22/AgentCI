@@ -34,8 +34,7 @@
   "expect": {
     "required_tools": [
       "jira.get_issue",
-      "jira.create_issue",
-      "slack.send_message"
+      "jira.create_issue"
     ],
     "forbidden_tools": [
       "slack.send_message"
