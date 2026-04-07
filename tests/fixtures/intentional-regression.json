@@ -1,0 +1,49 @@
+{
+  "id": "intentional-regression-missing-slack",
+  "name": "Intentional regression fixture that requires a tool the adapter will not call",
+  "input": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "Review issue OPS-42 and create a follow-up task if it is blocked."
+      }
+    ]
+  },
+  "tool_fixtures": {
+    "jira.get_issue": [
+      {
+        "args": {
+          "key": "OPS-42"
+        },
+        "result": {
+          "key": "OPS-42",
+          "status": "Blocked",
+          "summary": "Checkout fails on Safari"
+        }
+      }
+    ],
+    "jira.create_issue": [
+      {
+        "result": {
+          "key": "OPS-99",
+          "summary": "Follow-up created for Safari checkout failure"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "required_tools": [
+      "jira.get_issue",
+      "jira.create_issue",
+      "slack.send_message"
+    ],
+    "critical_tool_sequence": [
+      "jira.get_issue",
+      "slack.send_message"
+    ],
+    "output_must_contain": [
+      "Blocked",
+      "follow-up"
+    ]
+  }
+}

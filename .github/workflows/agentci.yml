@@ -1,0 +1,197 @@
+name: agentci
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  regression-check:
+    name: AgentCI Regression Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install AgentCI
+        # Why this step exists:
+        # It keeps the workflow close to how a user would run the package locally.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Run AgentCI
+        id: agentci_run
+        shell: bash
+        run: |
+          set +e
+          agentci run --config agentci.yaml --output-dir .agentci/runs
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Build PR summary from AgentCI artifacts
+        if: always()
+        shell: bash
+        env:
+          AGENTCI_EXIT_CODE: ${{ steps.agentci_run.outputs.exit_code }}
+        run: |
+          mkdir -p .agentci
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          exit_code = os.environ.get("AGENTCI_EXIT_CODE", "unknown")
+          run_files = sorted(Path(".agentci/runs").glob("**/run.json"))
+          run_data = None
+          regression_data = None
+
+          if run_files:
+              run_path = run_files[-1]
+              run_data = json.loads(run_path.read_text(encoding="utf-8"))
+              regression_path = run_path.parent / "regression-report.json"
+              if regression_path.exists():
+                  regression_data = json.loads(regression_path.read_text(encoding="utf-8"))
+
+          if exit_code == "1":
+              outcome = "Agent regression detected"
+              meaning = "AgentCI completed the run and found a blocking behavior regression."
+          elif exit_code == "2":
+              outcome = "AgentCI runtime/tooling failure"
+              meaning = (
+                  "AgentCI hit a config, adapter, tooling, or runtime failure. "
+                  "This is not evidence that product behavior regressed."
+              )
+          else:
+              outcome = "No blocking regressions"
+              meaning = "AgentCI completed the run and found no blocking regressions."
+
+          lines = [
+              "## AgentCI",
+              "",
+              f"- Outcome: **{outcome}**",
+              f"- Exit code: `{exit_code}`",
+              f"- Meaning: {meaning}",
+          ]
+
+          if run_data is not None:
+              summary = run_data["summary"]
+              lines.extend(
+                  [
+                      f"- Run status: `{run_data['status']}`",
+                      f"- Cases: **{summary['total']}** total, **{summary['passed']}** passed, **{summary['failed']}** failed",
+                      f"- Run ID: `{run_data['run_id']}`",
+                  ]
+              )
+
+              error = run_data.get("error")
+              if error:
+                  lines.extend(
+                      [
+                          "",
+                          "### AgentCI failure details",
+                          "",
+                          f"- Stage: `{error['stage']}`",
+                          f"- Message: {error['message']}",
+                      ]
+                  )
+
+              if regression_data and regression_data.get("regressions"):
+                  lines.extend(["", "### Blocking regressions", ""])
+                  for regression in regression_data["regressions"]:
+                      lines.append(
+                          f"- `{regression['case_id']}` failed `{regression['check']}`: {regression['message']}"
+                      )
+
+              if run_data.get("cases"):
+                  lines.extend(["", "### Per-case results", ""])
+                  for case in run_data["cases"]:
+                      lines.append(f"- `{case['case_id']}`: **{case['status']}**")
+          else:
+              lines.extend(
+                  [
+                      "",
+                      "No `run.json` artifact was generated.",
+                  ]
+              )
+
+          output_path = Path(".agentci/pr-comment.md")
+          output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+          cat .agentci/pr-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload AgentCI artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentci-artifacts
+          path: |
+            .agentci/runs
+            .agentci/pr-comment.md
+
+      - name: Post or update PR comment
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- agentci-report -->";
+            const body = marker + "\n" + fs.readFileSync(".agentci/pr-comment.md", "utf8");
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
+      - name: Fail workflow on regression or AgentCI runtime failure
+        if: always()
+        shell: bash
+        env:
+          AGENTCI_EXIT_CODE: ${{ steps.agentci_run.outputs.exit_code }}
+        run: |
+          case "$AGENTCI_EXIT_CODE" in
+            0)
+              exit 0
+              ;;
+            1)
+              echo "Agent regression detected."
+              exit 1
+              ;;
+            2)
+              echo "AgentCI failed due to config, adapter, tooling, or runtime issues. This is not evidence of product regression."
+              exit 1
+              ;;
+            *)
+              echo "AgentCI returned an unexpected exit code: $AGENTCI_EXIT_CODE"
+              exit 1
+              ;;
+          esac

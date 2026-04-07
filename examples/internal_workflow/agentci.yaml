@@ -1,0 +1,10 @@
+# Why this file exists:
+# This mirrors the root scaffold in a self-contained example folder so the
+# product story stays easy to demo without moving files around.
+version: 1
+adapter:
+  type: command
+  command: python examples/internal_workflow/adapter/run_case.py
+tests:
+  glob: examples/internal_workflow/tests/*.json
+output_dir: .agentci/examples

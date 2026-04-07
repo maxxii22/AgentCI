@@ -1,0 +1,10 @@
+# Why this file exists:
+# This is the smallest repo-local config that lets AgentCI discover tests,
+# invoke the sample adapter, and write artifacts in a predictable place.
+version: 1
+adapter:
+  type: command
+  command: python scripts/agentci_adapter.py
+tests:
+  glob: agentci/tests/create-followup-ticket.json
+output_dir: .agentci/runs

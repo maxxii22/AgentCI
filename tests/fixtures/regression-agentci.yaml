@@ -1,0 +1,10 @@
+# Why this file exists:
+# This alternate config intentionally points at a failing case so we can verify
+# that `agentci run` returns exit code 1 and that CI messaging says regression.
+version: 1
+adapter:
+  type: command
+  command: python ../../scripts/agentci_adapter.py
+tests:
+  glob: intentional-regression.json
+output_dir: .agentci/runs

@@ -1,0 +1,8 @@
+# Ignore local Python build output and AgentCI run artifacts.
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+.agentci/
+.tmp-tests/

@@ -1,0 +1,109 @@
+"""End-to-end CLI tests for the Day 3-5 refocus.
+
+Why this file exists:
+It verifies the exact MVP slice we care about right now: `agentci run` should
+return the right exit code and write artifacts for pass, regression, and
+runtime/config failure paths.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import unittest
+import uuid
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TEMP_ROOT = REPO_ROOT / ".tmp-tests"
+
+
+class AgentCIRunTests(unittest.TestCase):
+    def test_run_passes_for_default_sample_config(self) -> None:
+        completed, output_root = self._run_cli(
+            "--config",
+            "agentci.yaml",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+        run_json = self._latest_run_json(output_root)
+        run_data = json.loads(run_json.read_text(encoding="utf-8"))
+        self.assertEqual(run_data["status"], "passed")
+        self.assertEqual(run_data["summary"]["total"], 1)
+
+    def test_run_returns_exit_code_1_for_intentional_regression_fixture(self) -> None:
+        completed, output_root = self._run_cli(
+            "--config",
+            "tests/fixtures/regression-agentci.yaml",
+        )
+
+        self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+
+        run_json = self._latest_run_json(output_root)
+        report_json = run_json.parent / "regression-report.json"
+        run_data = json.loads(run_json.read_text(encoding="utf-8"))
+        report_data = json.loads(report_json.read_text(encoding="utf-8"))
+
+        self.assertEqual(run_data["status"], "failed")
+        self.assertEqual(report_data["status"], "failed")
+        self.assertGreaterEqual(report_data["summary"]["blocking_regressions"], 1)
+
+    def test_run_returns_exit_code_2_for_config_failure_and_writes_error_artifacts(self) -> None:
+        completed, output_root = self._run_cli(
+            "--config",
+            "missing-agentci.yaml",
+        )
+
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+
+        run_json = self._latest_run_json(output_root)
+        report_json = run_json.parent / "regression-report.json"
+        run_data = json.loads(run_json.read_text(encoding="utf-8"))
+        report_data = json.loads(report_json.read_text(encoding="utf-8"))
+
+        self.assertEqual(run_data["status"], "error")
+        self.assertEqual(run_data["error"]["stage"], "config")
+        self.assertEqual(report_data["status"], "error")
+
+    def _run_cli(self, *args: str) -> tuple[subprocess.CompletedProcess[str], Path]:
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        tempdir = TEMP_ROOT / f"agentci-test-{uuid.uuid4().hex}"
+        tempdir.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(shutil.rmtree, tempdir, ignore_errors=True)
+
+        output_root = tempdir / "agentci-runs"
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "agentci.cli",
+                "run",
+                *args,
+                "--output-dir",
+                str(output_root),
+            ],
+            cwd=str(REPO_ROOT),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        return completed, output_root
+
+    def _latest_run_json(self, output_root: Path) -> Path:
+        run_files = sorted(output_root.glob("**/run.json"))
+        self.assertTrue(run_files, f"No run.json found under {output_root}")
+        return run_files[-1]
+
+
+if __name__ == "__main__":
+    unittest.main()

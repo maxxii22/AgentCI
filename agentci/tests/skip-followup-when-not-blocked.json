@@ -1,0 +1,42 @@
+{
+  "id": "skip-followup-when-not-blocked",
+  "name": "Do not create a follow-up when the source issue is not blocked",
+  "input": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "Review issue OPS-43 and create a follow-up task if it is blocked."
+      }
+    ]
+  },
+  "tool_fixtures": {
+    "jira.get_issue": [
+      {
+        "args": {
+          "key": "OPS-43"
+        },
+        "result": {
+          "key": "OPS-43",
+          "status": "In Progress",
+          "summary": "Checkout metrics investigation"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "required_tools": [
+      "jira.get_issue"
+    ],
+    "forbidden_tools": [
+      "jira.create_issue",
+      "slack.send_message"
+    ],
+    "critical_tool_sequence": [
+      "jira.get_issue"
+    ],
+    "output_must_contain": [
+      "OPS-43",
+      "not blocked"
+    ]
+  }
+}
