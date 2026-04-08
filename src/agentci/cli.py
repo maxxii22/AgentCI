@@ -19,6 +19,7 @@ from agentci.reporter import (
     render_text_summary,
 )
 from agentci.runner import execute_run, write_error_run
+from agentci.viewer import ViewError, list_runs, view_case, view_run
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -58,6 +59,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report_parser.add_argument("--output")
     report_parser.set_defaults(func=command_report)
+
+    view_parser = subparsers.add_parser(
+        "view", help="Inspect recent runs and per-case traces from local artifacts"
+    )
+    view_parser.add_argument("run_id", nargs="?")
+    view_parser.add_argument("--case")
+    view_parser.add_argument("--latest", action="store_true")
+    view_parser.add_argument("--config", default="agentci.yaml")
+    view_parser.add_argument("--output-dir")
+    view_parser.set_defaults(func=command_view)
 
     return parser
 
@@ -157,6 +168,38 @@ def command_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_view(args: argparse.Namespace) -> int:
+    """Inspect saved runs and traces from the local output directory."""
+
+    if args.latest and args.run_id:
+        print("AgentCI error: choose either a run id or --latest, not both.", file=sys.stderr)
+        return 2
+
+    try:
+        output_root = _resolve_view_output_root(args.config, args.output_dir)
+        if args.case:
+            rendered = view_case(
+                output_root,
+                case_id=args.case,
+                run_id=args.run_id,
+                latest=args.latest or args.run_id is None,
+            )
+        elif args.run_id or args.latest:
+            rendered = view_run(
+                output_root,
+                run_id=args.run_id,
+                latest=args.latest,
+            )
+        else:
+            rendered = list_runs(output_root)
+    except (ConfigError, ViewError) as error:
+        print(f"AgentCI error: {error}", file=sys.stderr)
+        return 2
+
+    print(rendered)
+    return 0
+
+
 def _resolve_fallback_output_root(output_dir: str | None) -> Path:
     if output_dir:
         override = Path(output_dir)
@@ -175,6 +218,17 @@ def _resolve_output_root_for_cli(
             return override
         return (root_dir / override).resolve()
     return config_output_dir
+
+
+def _resolve_view_output_root(config_path: str, output_dir_override: str | None) -> Path:
+    if output_dir_override:
+        return _resolve_fallback_output_root(output_dir_override)
+
+    try:
+        config = load_config(config_path)
+    except ConfigError:
+        return _resolve_fallback_output_root(None)
+    return config.output_dir
 
 
 def _result_kind(

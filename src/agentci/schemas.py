@@ -59,16 +59,18 @@ class CheckResult(TypedDict, total=False):
     name: str
     status: str
     message: str
+    reason: str
     expected: str
     actual: str
 
 
-class CaseResult(TypedDict):
+class CaseResult(TypedDict, total=False):
     case_id: str
     status: str
     duration_ms: int
     trace_path: str
     checks: list[CheckResult]
+    failure_reason: str
 
 
 class RunSummary(TypedDict):
@@ -93,6 +95,7 @@ class RegressionItem(TypedDict):
     case_id: str
     severity: str
     check: str
+    reason: str
     expected: str
     actual: str
     message: str
@@ -120,3 +123,35 @@ class RegressionReport(TypedDict):
 class ErrorInfo(TypedDict):
     stage: str
     message: str
+
+
+class TraceToolStep(TypedDict):
+    step: int
+    tool_name: str
+
+
+class TraceFailure(TypedDict):
+    check: str
+    expected: str
+    actual: str
+    reason: str
+
+
+class TraceEvaluation(TypedDict):
+    status: str
+    summary: str
+    failed_checks: list[TraceFailure]
+
+
+class StoredTrace(TypedDict, total=False):
+    case_id: str
+    case_name: str
+    prompt: str
+    input: dict[str, Any]
+    expectations: TestCaseExpect
+    actual_final_output: str
+    actual_tools_used: list[str]
+    tool_timeline: list[TraceToolStep]
+    evaluation: TraceEvaluation
+    failure_reason: str
+    raw_trace: Trace

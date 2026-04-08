@@ -7,7 +7,14 @@ keeps policy decisions separate from command execution.
 
 from __future__ import annotations
 
-from agentci.schemas import AdapterOutput, CaseResult, CheckResult, RegressionItem, RegressionReport, TestCase
+from agentci.schemas import (
+    AdapterOutput,
+    CaseResult,
+    CheckResult,
+    RegressionItem,
+    RegressionReport,
+    TestCase,
+)
 
 
 def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseResult, list[RegressionItem]]:
@@ -23,11 +30,12 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
 
     required_tools = expectations.get("required_tools", [])
     missing_tools = [tool for tool in required_tools if tool not in tool_names]
+    required_tools_reason = _required_tools_reason(required_tools, tool_names, missing_tools)
     checks.append(
         _make_check(
             "required_tools",
             not missing_tools,
-            _missing_required_tools_message(missing_tools),
+            required_tools_reason,
             expected=", ".join(required_tools),
             actual=", ".join(tool_names) or "(no tools called)",
         )
@@ -39,17 +47,18 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
                 check="required_tools",
                 expected=", ".join(required_tools),
                 actual=", ".join(tool_names) or "(no tools called)",
-                message=f"Missing required tools: {', '.join(missing_tools)}",
+                reason=required_tools_reason or "Missing required tools.",
             )
         )
 
     forbidden_tools = expectations.get("forbidden_tools", [])
     forbidden_used = [tool for tool in forbidden_tools if tool in tool_names]
+    forbidden_tools_reason = _forbidden_tools_reason(forbidden_used)
     checks.append(
         _make_check(
             "forbidden_tools",
             not forbidden_used,
-            _forbidden_tools_message(forbidden_used),
+            forbidden_tools_reason,
             expected="No forbidden tools",
             actual=", ".join(forbidden_used) or "(none)",
         )
@@ -61,17 +70,18 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
                 check="forbidden_tools",
                 expected="No forbidden tools",
                 actual=", ".join(forbidden_used),
-                message=f"Forbidden tools were used: {', '.join(forbidden_used)}",
+                reason=forbidden_tools_reason or "Forbidden tools were used.",
             )
         )
 
     expected_sequence = expectations.get("critical_tool_sequence", [])
     sequence_ok = _is_subsequence(expected_sequence, tool_names)
+    sequence_reason = _critical_sequence_reason(expected_sequence, tool_names)
     checks.append(
         _make_check(
             "critical_tool_sequence",
             sequence_ok,
-            None if sequence_ok else f"Expected subsequence: {' -> '.join(expected_sequence)}",
+            sequence_reason,
             expected=" -> ".join(expected_sequence),
             actual=" -> ".join(tool_names) or "(no tools called)",
         )
@@ -83,7 +93,7 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
                 check="critical_tool_sequence",
                 expected=" -> ".join(expected_sequence),
                 actual=" -> ".join(tool_names) or "(no tools called)",
-                message="Critical tool order regressed.",
+                reason=sequence_reason or "Critical tool order regressed.",
             )
         )
 
@@ -91,13 +101,14 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
     missing_facts = [
         fact for fact in expected_output_facts if fact.lower() not in final_output.lower()
     ]
+    output_reason = _expected_output_reason(expected_output_facts, final_output, missing_facts)
     checks.append(
         _make_check(
             "output_must_contain",
             not missing_facts,
-            _missing_expected_facts_message(missing_facts),
+            output_reason,
             expected=", ".join(expected_output_facts),
-            actual=final_output,
+            actual=final_output or "(empty output)",
         )
     )
     if missing_facts:
@@ -106,12 +117,13 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
                 case_id=case["id"],
                 check="output_must_contain",
                 expected=", ".join(expected_output_facts),
-                actual=final_output,
-                message=f"Missing expected facts: {', '.join(missing_facts)}",
+                actual=final_output or "(empty output)",
+                reason=output_reason or "Expected output signal missing.",
             )
         )
 
-    status = "passed" if all(check["status"] == "passed" for check in checks) else "failed"
+    failed_checks = [check for check in checks if check["status"] == "failed"]
+    status = "passed" if not failed_checks else "failed"
     case_result: CaseResult = {
         "case_id": case["id"],
         "status": status,
@@ -119,6 +131,11 @@ def evaluate_case(case: TestCase, adapter_output: AdapterOutput) -> tuple[CaseRe
         "trace_path": "",
         "checks": checks,
     }
+    if failed_checks:
+        case_result["failure_reason"] = " ".join(
+            f"{check['name']}: {check.get('reason', check.get('message', 'check failed'))}"
+            for check in failed_checks
+        )
 
     return case_result, regressions
 
@@ -163,15 +180,16 @@ def _extract_tool_names(events: list[dict[str, object]]) -> list[str]:
 def _make_check(
     name: str,
     passed: bool,
-    message: str | None,
+    reason: str | None,
     *,
     expected: str,
     actual: str,
 ) -> CheckResult:
     check: CheckResult = {"name": name, "status": "passed" if passed else "failed"}
-    if message:
-        check["message"] = message
+    if reason:
+        check["message"] = reason
     if not passed:
+        check["reason"] = reason or "check failed"
         check["expected"] = expected
         check["actual"] = actual
     return check
@@ -183,35 +201,60 @@ def _make_regression(
     check: str,
     expected: str,
     actual: str,
-    message: str,
+    reason: str,
 ) -> RegressionItem:
     return {
         "case_id": case_id,
         "severity": "blocking",
         "check": check,
+        "reason": reason,
         "expected": expected,
         "actual": actual,
-        "message": message,
+        "message": reason,
     }
 
 
-def _join_items(items: list[str]) -> str | None:
-    return ", ".join(items) if items else None
+def _required_tools_reason(
+    required_tools: list[str], actual_tools: list[str], missing_tools: list[str]
+) -> str | None:
+    if not missing_tools:
+        return None
+    return (
+        f"Expected required tools {', '.join(required_tools)}, but actual tools were "
+        f"{', '.join(actual_tools) or '(no tools called)'}. Missing required tools: "
+        f"{', '.join(missing_tools)}."
+    )
 
 
-def _missing_required_tools_message(items: list[str]) -> str | None:
-    joined = _join_items(items)
-    return f"Missing required tools: {joined}" if joined else None
+def _forbidden_tools_reason(forbidden_used: list[str]) -> str | None:
+    if not forbidden_used:
+        return None
+    return (
+        f"Expected no forbidden tools, but actual forbidden tools used were "
+        f"{', '.join(forbidden_used)}."
+    )
 
 
-def _forbidden_tools_message(items: list[str]) -> str | None:
-    joined = _join_items(items)
-    return f"Forbidden tools were used: {joined}" if joined else None
+def _critical_sequence_reason(expected_sequence: list[str], actual_tools: list[str]) -> str | None:
+    if not expected_sequence or _is_subsequence(expected_sequence, actual_tools):
+        return None
+    actual_order = " -> ".join(actual_tools) or "(no tools called)"
+    return (
+        f"Expected tool order {' -> '.join(expected_sequence)}, but actual order was "
+        f"{actual_order}."
+    )
 
 
-def _missing_expected_facts_message(items: list[str]) -> str | None:
-    joined = _join_items(items)
-    return f"Missing expected facts: {joined}" if joined else None
+def _expected_output_reason(
+    expected_output_facts: list[str], final_output: str, missing_facts: list[str]
+) -> str | None:
+    if not missing_facts:
+        return None
+    actual_output = final_output or "(empty output)"
+    return (
+        f"Expected final output to contain {', '.join(expected_output_facts)}, but actual "
+        f"output was {actual_output}. Missing expected facts: {', '.join(missing_facts)}."
+    )
 
 
 def _is_subsequence(expected: list[str], actual: list[str]) -> bool:

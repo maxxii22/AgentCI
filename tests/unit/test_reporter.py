@@ -111,9 +111,10 @@ class RenderCISummaryTests(unittest.TestCase):
                     "case_id": "required-tool-regression-missing-slack",
                     "severity": "blocking",
                     "check": "required_tools",
+                    "reason": "Expected required tools jira.get_issue, jira.create_issue, slack.send_message, but actual tools were jira.get_issue, jira.create_issue. Missing required tools: slack.send_message.",
                     "expected": "jira.get_issue, jira.create_issue, slack.send_message",
                     "actual": "jira.get_issue, jira.create_issue",
-                    "message": "Missing required tools: slack.send_message",
+                    "message": "Expected required tools jira.get_issue, jira.create_issue, slack.send_message, but actual tools were jira.get_issue, jira.create_issue. Missing required tools: slack.send_message.",
                 }
             ],
         }
@@ -128,7 +129,10 @@ class RenderCISummaryTests(unittest.TestCase):
         self.assertIn("## AgentCI: Regression detected", summary)
         self.assertIn("Exit code: `1`", summary)
         self.assertIn("`required-tool-regression-missing-slack`", summary)
-        self.assertIn("required_tools: Missing required tools: slack.send_message", summary)
+        self.assertIn("failed check: `required_tools`", summary)
+        self.assertIn("expected: `jira.get_issue, jira.create_issue, slack.send_message`", summary)
+        self.assertIn("actual: `jira.get_issue, jira.create_issue`", summary)
+        self.assertIn("Expected required tools jira.get_issue, jira.create_issue, slack.send_message", summary)
         self.assertIn("### Failed cases", summary)
         self.assertIn("Artifacts and logs: [GitHub Actions run](https://github.com/maxxii22/AgentCI/actions/runs/456)", summary)
 

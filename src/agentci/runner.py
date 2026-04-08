@@ -16,8 +16,8 @@ from agentci.adapters.command import AdapterError, run_command_adapter
 from agentci.config import AgentCIConfig
 from agentci.evals import build_regression_report, evaluate_case
 from agentci.loader import LoaderError, load_test_cases
-from agentci.schemas import RegressionReport, RunResult
-from agentci.store import prepare_run_directory, write_artifact, write_trace
+from agentci.schemas import CaseResult, RegressionItem, RegressionReport, RunResult
+from agentci.store import build_trace_artifact, prepare_run_directory, write_artifact, write_trace
 
 
 class RunError(RuntimeError):
@@ -38,8 +38,8 @@ def execute_run(
     output_root = _resolve_output_root(config, output_dir_override)
     run_dir = prepare_run_directory(output_root, run_id)
 
-    case_results = []
-    regressions = []
+    case_results: list[CaseResult] = []
+    regressions: list[RegressionItem] = []
 
     try:
         cases = load_test_cases(config.root_dir, config.tests.glob)
@@ -53,7 +53,8 @@ def execute_run(
             adapter_output = run_command_adapter(config.adapter.command, case, config.root_dir)
             case_result, case_regressions = evaluate_case(case, adapter_output)
             case_result["duration_ms"] = int((time.perf_counter() - started) * 1000)
-            case_result["trace_path"] = write_trace(run_dir, case["id"], adapter_output["trace"])
+            trace_artifact = build_trace_artifact(case, adapter_output, case_result, case_regressions)
+            case_result["trace_path"] = write_trace(run_dir, case["id"], trace_artifact)
             case_results.append(case_result)
             regressions.extend(case_regressions)
     except (AdapterError, LoaderError, RunError) as error:
@@ -142,8 +143,8 @@ def _write_error_artifacts(
     *,
     run_id: str,
     started_at: str,
-    case_results: list[dict[str, object]],
-    regressions: list[dict[str, str]],
+    case_results: list[CaseResult],
+    regressions: list[RegressionItem],
     stage: str,
     message: str,
 ) -> tuple[RunResult, RegressionReport, Path]:

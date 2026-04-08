@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agentci.schemas import RegressionReport, RunResult
+from agentci.schemas import RegressionItem, RegressionReport, RunResult
 
 
 def infer_exit_code(run_result: RunResult) -> int:
@@ -28,7 +28,7 @@ def render_text_summary(run_result: RunResult) -> str:
     """Render a short text summary for local CLI usage."""
 
     summary = run_result["summary"]
-    failed_case_reasons = _build_failed_case_reason_map(run_result)
+    failed_details = _failed_case_details_from_run(run_result)
     lines = [
         "AgentCI run summary",
         f"outcome: {run_result.get('result_kind', 'pass')}",
@@ -42,15 +42,13 @@ def render_text_summary(run_result: RunResult) -> str:
         lines.append(f"error_stage: {error['stage']}")
         lines.append(f"error_message: {error['message']}")
 
-    failed_cases = [case for case in run_result["cases"] if case["status"] == "failed"]
-    if failed_cases:
+    if failed_details:
         lines.append("failed cases:")
-        for case in failed_cases:
-            reason = failed_case_reasons.get(case["case_id"])
-            if reason:
-                lines.append(f"- {case['case_id']}: {reason}")
-            else:
-                lines.append(f"- {case['case_id']}")
+        for detail in failed_details:
+            lines.append(
+                f"- {detail['case_id']} | check={detail['check']} | expected={detail['expected']} | "
+                f"actual={detail['actual']} | reason={detail['reason']}"
+            )
 
     return "\n".join(lines)
 
@@ -79,7 +77,7 @@ def render_pr_comment(
         regression_report.get("failed_case_ids")
         or [case["case_id"] for case in run_result["cases"] if case["status"] == "failed"]
     )
-    failed_case_reasons = _build_failed_case_reason_map(run_result, regression_report)
+    failed_details = _failed_case_details(run_result, regression_report)
     heading, meaning = _describe_outcome(str(run_result.get("result_kind", "pass")), str(exit_code))
     lines = [
         f"## AgentCI: {heading}",
@@ -115,13 +113,16 @@ def render_pr_comment(
                 "",
             ]
         )
-    elif failed_case_ids:
+    elif failed_details:
         lines.append("### Failed cases")
         lines.append("")
-        for case_id in failed_case_ids:
-            reason = failed_case_reasons.get(case_id, "Blocking checks failed.")
-            lines.append(f"- `{case_id}`: {reason}")
-        lines.append("")
+        for detail in failed_details:
+            lines.append(f"- `{detail['case_id']}`")
+            lines.append(f"  failed check: `{detail['check']}`")
+            lines.append(f"  expected: `{detail['expected']}`")
+            lines.append(f"  actual: `{detail['actual']}`")
+            lines.append(f"  reason: {detail['reason']}")
+            lines.append("")
     else:
         lines.append("No blocking regressions found.")
 
@@ -207,28 +208,41 @@ def _build_default_regression_report(run_result: RunResult) -> RegressionReport:
     }
 
 
-def _build_failed_case_reason_map(
-    run_result: RunResult, regression_report: RegressionReport | None = None
-) -> dict[str, str]:
-    reason_map: dict[str, str] = {}
+def _failed_case_details(
+    run_result: RunResult, regression_report: RegressionReport
+) -> list[dict[str, str]]:
+    if regression_report["regressions"]:
+        return [
+            {
+                "case_id": regression["case_id"],
+                "check": regression["check"],
+                "expected": regression["expected"],
+                "actual": regression["actual"],
+                "reason": regression.get("reason", regression["message"]),
+            }
+            for regression in regression_report["regressions"]
+        ]
+    return _failed_case_details_from_run(run_result)
+
+
+def _failed_case_details_from_run(run_result: RunResult) -> list[dict[str, str]]:
+    details: list[dict[str, str]] = []
     for case in run_result["cases"]:
         if case["status"] != "failed":
             continue
-
-        failed_checks = [check for check in case["checks"] if check["status"] == "failed"]
-        parts = []
-        for check in failed_checks:
-            reason = check.get("message", "check failed")
-            parts.append(f"{check['name']}: {reason}")
-        reason_map[case["case_id"]] = "; ".join(parts) if parts else "Blocking checks failed."
-
-    if regression_report:
-        for regression in regression_report["regressions"]:
-            reason_map.setdefault(
-                regression["case_id"],
-                f"{regression['check']}: {regression['message']}",
+        for check in case["checks"]:
+            if check["status"] != "failed":
+                continue
+            details.append(
+                {
+                    "case_id": case["case_id"],
+                    "check": check["name"],
+                    "expected": str(check.get("expected", "")),
+                    "actual": str(check.get("actual", "")),
+                    "reason": str(check.get("reason", check.get("message", "check failed"))),
+                }
             )
-    return reason_map
+    return details
 
 
 def _describe_outcome(result_kind: str, exit_code: str) -> tuple[str, str]:

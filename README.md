@@ -1,103 +1,80 @@
 # AgentCI
 
-CI guardrails for tool-using AI agents.
+CI/CD for AI agents. AgentCI tests agent behavior in pull requests and blocks broken merges before they ship.
 
-This repository is the Day 3-5 refocus for AgentCI: a narrow PR-time regression harness for internal workflow agents. The goal is to prove one end-to-end slice: load one config, run one adapter against one sample case, produce a pass or fail result, and surface that clearly in GitHub Actions.
+## Problem
 
-## Why this repo exists
+AI agents break silently.
 
-This scaffold is intentionally small:
-- one Python CLI
-- one command-based adapter contract
-- one deterministic eval engine
-- repo-local JSON artifacts
-- one draft GitHub Actions workflow
+- A prompt change can break tool usage
+- An agent can call the wrong tool
+- Output quality can degrade without throwing an error
+- Teams often find out after merge or in production
 
-It is not a full platform, dashboard, or framework integration layer.
+## Solution
 
-## Current scope
+AgentCI puts behavior checks in CI.
 
-The v1 wedge is **internal workflow agents** such as:
-- ticket triage agents
-- follow-up task agents
-- internal ops workflow agents
-- CRM update agents
+On every pull request, it can:
+- run agent test cases
+- validate required and forbidden tools
+- catch behavioral regressions
+- fail the check before bad agent changes merge
 
-The initial blocking checks are:
-- required tools used
-- forbidden tools not used
-- critical tool order respected
-- output contains expected facts
-
-## Repository layout
+## Example output
 
 ```text
-src/agentci/          Python package for the CLI and core runtime
-agentci/tests/        Sample repo-local regression cases
-scripts/              Sample adapter command implementation
-.github/workflows/    Draft PR workflow
-docs/                 Supporting docs for setup and workflow behavior
+❌ Regression detected
+
+- Missing required tool: slack.send_message
+- Cases: 3 total, 2 passed, 1 failed
+
+This PR will be blocked until fixed.
 ```
 
-## Quick start
+## How it works
 
-Install the package in editable mode:
+1. Define a few agent test cases
+2. Run `agentci run`
+3. Add AgentCI to GitHub Actions so PRs fail on regressions
+
+## Quickstart
 
 ```bash
+git clone https://github.com/maxxii22/AgentCI.git
+cd AgentCI
 python -m pip install -e .
-```
-
-Run the sample suite:
-
-```bash
 agentci run --config agentci.yaml
 ```
 
-Run the intentional regression fixture:
+## What AgentCI tests
 
-```bash
-agentci run --config tests/fixtures/regression-agentci.yaml
-```
+- required tools
+- forbidden tools
+- tool call order
+- expected output signals
+- agent behavior, not just code paths
 
-## Current command status
+## Why it matters
 
-- `agentci run` is minimally implemented for the scaffold and should work end-to-end with the sample adapter.
-- `agentci report` is optional convenience for local inspection and is not part of the critical CI path.
-- `agentci init` and `agentci compare` exist as CLI placeholders with TODOs so the interface is visible early.
+- AI agents are harder to trust than normal code
+- unit tests usually miss behavior regressions
+- CI should verify what the agent actually does
+- AgentCI gives reviewers a clear pass/fail signal inside the PR
 
-## Exit code semantics
+## Status
 
-- `0` means no blocking regressions were found.
-- `1` means AgentCI detected a product behavior regression.
-- `2` means AgentCI hit a config, adapter, tooling, or runtime failure. This is a harness failure, not evidence that the product behavior regressed.
+Early-stage MVP.
 
-## Adapter contract
+Today, AgentCI supports:
+- deterministic regression checks
+- local runs
+- GitHub Actions PR checks
+- PR comments with failure explanations
+- trace artifacts for debugging
 
-The adapter is a simple command:
-- AgentCI sends one test case JSON object to `stdin`
-- the adapter writes one JSON object to `stdout`
+## Try AgentCI
 
-Expected adapter output:
+If you are building tool-using agents, try the repo and open an issue or reach out.
 
-```json
-{
-  "final_output": "OPS-42 is Blocked. Created follow-up OPS-99 for the Safari checkout issue.",
-  "trace": {
-    "case_id": "create-followup-ticket",
-    "events": []
-  }
-}
-```
-
-## Why the scaffold avoids extra dependencies
-
-This initial repo uses only the Python standard library. The config file is still named `agentci.yaml`, but the parser only supports the small subset of YAML the MVP needs today. That keeps local setup and CI installation trivial while the interface is still settling.
-
-## Important TODOs
-
-- flesh out `agentci init`
-- implement `agentci compare`
-- harden config validation
-- expand trace normalization
-- add more unit tests
-- refine the PR comment workflow
+If you want help setting it up on a real agent workflow, I can help you get the first PR check running quickly.
